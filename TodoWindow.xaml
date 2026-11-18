@@ -44,7 +44,7 @@
     </Style>
     <ContextMenu x:Key="ItemMenu" x:Shared="False"
                  DataContext="{Binding PlacementTarget.DataContext, RelativeSource={RelativeSource Self}}">
-      <MenuItem Header="항목 복제" Click="DuplicateItem" />
+      <MenuItem Header="항목 복사" Click="CopyItem" />
       <MenuItem Header="항목 삭제" Click="RemoveItem" />
     </ContextMenu>
     <DataTemplate x:Key="ChildItem">

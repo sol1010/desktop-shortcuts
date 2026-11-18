@@ -33,7 +33,7 @@ public partial class TodoWindow : Window
         DataContext = session;
         Topmost = _board.AlwaysOnTop;
         RestorePreferredSize();
-        DragArea.ContextMenu = BuildWindowMenu();
+        Card.ContextMenu = BuildWindowMenu();
         _resizer = new WidgetResizer(this, ResizeLayer, SetManualSize, RestoreAutoHeight, SaveSize);
         _ready = true;
     }
@@ -153,6 +153,10 @@ public partial class TodoWindow : Window
     private ContextMenu BuildWindowMenu()
     {
         var menu = new ContextMenu();
+        var paste = new MenuItem { Header = "항목 붙여넣기" };
+        paste.Click += (_, _) => _session.PasteItem();
+        menu.Items.Add(paste);
+        menu.Items.Add(new Separator());
         var topmost = new MenuItem { Header = "항상 위", IsCheckable = true };
         topmost.Click += (_, _) => _app.SetWidgetTopmost(this, topmost.IsChecked);
         var hide = new MenuItem { Header = "투두 목록 숨기기" };
@@ -161,6 +165,7 @@ public partial class TodoWindow : Window
         menu.Items.Add(hide);
         menu.Opened += (_, _) =>
         {
+            paste.IsEnabled = _session.CanPasteItem;
             topmost.IsChecked = _board.AlwaysOnTop;
             hide.Header = _board.DockedToCalendar ? "달력·투두 숨기기" : "투두 목록 숨기기";
         };
@@ -295,12 +300,11 @@ public partial class TodoWindow : Window
         }
     }
 
-    private void DuplicateItem(object sender, RoutedEventArgs e)
+    private void CopyItem(object sender, RoutedEventArgs e)
     {
-        if (sender is MenuItem { DataContext: TodoItem item } && FindItemList(item) is { } items)
+        if (sender is MenuItem { DataContext: TodoItem item } && FindItemList(item) is not null)
         {
-            items.Insert(items.IndexOf(item) + 1, item.Copy());
-            _session.QueueSave();
+            _session.CopyItem(item);
         }
     }
 

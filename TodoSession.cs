@@ -38,6 +38,7 @@ internal sealed class TodoSession : INotifyPropertyChanged, IDisposable
     private readonly DispatcherTimer _saveTimer;
     private bool _dirty;
     private bool _saveFailed;
+    private TodoItem? _copiedItem;
 
     public TodoBoard Board { get; }
     public DateOnly Date { get; private set; }
@@ -45,6 +46,7 @@ internal sealed class TodoSession : INotifyPropertyChanged, IDisposable
     public string DateCaption => $"{Date.Month}월 {Date.Day}일";
     public string MemoDateCaption => $"{Date.Year}년 {Date.Month}월 {Date.Day}일";
     public bool SaveFailed => _saveFailed;
+    public bool CanPasteItem => _copiedItem is not null;
 
     public event PropertyChangedEventHandler? PropertyChanged;
     public event EventHandler? NoteChanged;
@@ -82,6 +84,17 @@ internal sealed class TodoSession : INotifyPropertyChanged, IDisposable
         Notify(nameof(DateCaption));
         Notify(nameof(MemoDateCaption));
         QueueSave();
+    }
+
+    public void CopyItem(TodoItem item) => _copiedItem = item.Copy();
+
+    public void PasteItem()
+    {
+        if (_copiedItem is not null)
+        {
+            Day.Items.Add(_copiedItem.Copy());
+            QueueSave();
+        }
     }
 
     public string Preview(DateOnly date)
