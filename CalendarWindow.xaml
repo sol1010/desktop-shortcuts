@@ -1,0 +1,138 @@
+<Window x:Class="DesktopShortcuts.CalendarWindow"
+        xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        xmlns:local="clr-namespace:DesktopShortcuts"
+        Title="달력" Width="354" MinWidth="200" MinHeight="146" SizeToContent="Height"
+        WindowStyle="None" ResizeMode="NoResize" Background="Transparent"
+        AllowsTransparency="True" ShowInTaskbar="False" ShowActivated="False"
+        WindowStartupLocation="Manual" UseLayoutRounding="True" FontFamily="Malgun Gothic">
+  <Window.Resources>
+    <Style x:Key="DayButton" TargetType="Button">
+      <Setter Property="Background" Value="#19080B1E" />
+      <Setter Property="Foreground" Value="{DynamicResource ShortcutLabelBrush}" />
+      <Setter Property="Margin" Value="1" />
+      <Setter Property="MinHeight" Value="22" />
+      <Setter Property="Template">
+        <Setter.Value>
+          <ControlTemplate TargetType="Button">
+            <Border x:Name="DaySurface" Background="{TemplateBinding Background}" CornerRadius="4">
+              <ContentPresenter HorizontalAlignment="Stretch" VerticalAlignment="Stretch" />
+            </Border>
+            <ControlTemplate.Triggers>
+              <Trigger Property="IsMouseOver" Value="True">
+                <Setter TargetName="DaySurface" Property="Opacity" Value="0.72" />
+              </Trigger>
+              <Trigger Property="IsKeyboardFocused" Value="True">
+                <Setter TargetName="DaySurface" Property="BorderBrush" Value="{DynamicResource ShortcutFolderBrush}" />
+                <Setter TargetName="DaySurface" Property="BorderThickness" Value="1" />
+              </Trigger>
+            </ControlTemplate.Triggers>
+          </ControlTemplate>
+        </Setter.Value>
+      </Setter>
+      <Style.Triggers>
+        <DataTrigger Binding="{Binding IsSelected}" Value="True">
+          <Setter Property="Background" Value="{DynamicResource ShortcutSelectionBackground}" />
+        </DataTrigger>
+        <Trigger Property="IsEnabled" Value="False">
+          <Setter Property="Background" Value="Transparent" />
+        </Trigger>
+      </Style.Triggers>
+    </Style>
+    <Style x:Key="Weekday" TargetType="TextBlock">
+      <Setter Property="Foreground" Value="{DynamicResource ShortcutLabelBrush}" />
+      <Setter Property="FontSize" Value="{DynamicResource CalendarWeekdayFontSize}" />
+      <Setter Property="HorizontalAlignment" Value="Center" />
+    </Style>
+  </Window.Resources>
+  <Grid>
+    <Grid.RowDefinitions>
+      <RowDefinition x:Name="CalendarPanelRow" Height="*" />
+      <RowDefinition x:Name="TodoPanelRow" Height="Auto" />
+    </Grid.RowDefinitions>
+    <Border x:Name="Card" Padding="8,6,8,8" Background="{DynamicResource ShortcutBackground}"
+            CornerRadius="{DynamicResource ShortcutCornerRadius}">
+      <Grid>
+        <Grid.RowDefinitions>
+          <RowDefinition Height="Auto" />
+          <RowDefinition Height="Auto" />
+          <RowDefinition x:Name="DaysRow" Height="270" />
+          <RowDefinition Height="Auto" />
+          <RowDefinition x:Name="CalendarMemoRow" Height="80" />
+          <RowDefinition Height="Auto" />
+        </Grid.RowDefinitions>
+        <DockPanel Margin="0,0,0,4">
+          <Button x:Name="NextButton" DockPanel.Dock="Right" Style="{StaticResource WidgetButton}"
+                  Content="›" Click="NextPeriod" ToolTip="다음 달" AutomationProperties.Name="다음 달" />
+          <Button x:Name="PreviousButton" DockPanel.Dock="Right" Style="{StaticResource WidgetButton}"
+                  Content="‹" Click="PreviousPeriod" ToolTip="이전 달" AutomationProperties.Name="이전 달" />
+          <Button DockPanel.Dock="Right" Style="{StaticResource WidgetButton}" Width="34" FontSize="11"
+                  Content="오늘" Click="JumpToday" />
+          <Border x:Name="DragArea" Background="Transparent" Cursor="SizeAll" MouseLeftButtonDown="DragHeading"
+                  ToolTip="끌어서 이동 · 우클릭으로 설정">
+            <TextBlock x:Name="MonthTitle" VerticalAlignment="Center" FontSize="14" FontWeight="SemiBold"
+                       Foreground="{DynamicResource ShortcutLabelBrush}" />
+          </Border>
+        </DockPanel>
+        <UniformGrid Grid.Row="1" Columns="7" Margin="0,2,0,4">
+          <TextBlock Style="{StaticResource Weekday}" Text="일" />
+          <TextBlock Style="{StaticResource Weekday}" Text="월" />
+          <TextBlock Style="{StaticResource Weekday}" Text="화" />
+          <TextBlock Style="{StaticResource Weekday}" Text="수" />
+          <TextBlock Style="{StaticResource Weekday}" Text="목" />
+          <TextBlock Style="{StaticResource Weekday}" Text="금" />
+          <TextBlock Style="{StaticResource Weekday}" Text="토" />
+        </UniformGrid>
+        <ItemsControl x:Name="DayGrid" Grid.Row="2">
+          <ItemsControl.ItemsPanel>
+            <ItemsPanelTemplate><UniformGrid Columns="7" /></ItemsPanelTemplate>
+          </ItemsControl.ItemsPanel>
+          <ItemsControl.ItemTemplate>
+            <DataTemplate>
+              <Button Style="{StaticResource DayButton}" IsEnabled="{Binding IsDate}"
+                      AutomationProperties.Name="{Binding Label}" Click="SelectDate">
+                <StackPanel VerticalAlignment="Center" Margin="2,0">
+                  <TextBlock Text="{Binding Number}" TextAlignment="Center" FontSize="{DynamicResource CalendarDayFontSize}">
+                    <TextBlock.Style>
+                      <Style TargetType="TextBlock">
+                        <Style.Triggers>
+                          <DataTrigger Binding="{Binding IsToday}" Value="True">
+                            <Setter Property="Foreground" Value="{DynamicResource ShortcutFolderBrush}" />
+                            <Setter Property="FontWeight" Value="SemiBold" />
+                          </DataTrigger>
+                        </Style.Triggers>
+                      </Style>
+                    </TextBlock.Style>
+                  </TextBlock>
+                  <Viewbox x:Name="PreviewScale" HorizontalAlignment="Center" StretchDirection="DownOnly">
+                    <TextBlock Text="{Binding Preview}" TextAlignment="Center" FontSize="{DynamicResource CalendarPreviewFontSize}"
+                               Foreground="{DynamicResource ShortcutFolderBrush}" />
+                  </Viewbox>
+                </StackPanel>
+              </Button>
+            </DataTemplate>
+          </ItemsControl.ItemTemplate>
+        </ItemsControl>
+        <DockPanel x:Name="MemoHeader" Grid.Row="3" Margin="0,4,0,4">
+          <Button x:Name="MemoToggle" DockPanel.Dock="Left" Style="{StaticResource WidgetButton}"
+                  Width="48" Height="16" FontSize="11" Click="ToggleMemo" Visibility="Collapsed" />
+          <TextBlock x:Name="MemoLabel" DockPanel.Dock="Left" Text="메모" FontSize="13" FontWeight="SemiBold"
+                     Foreground="{DynamicResource ShortcutLabelBrush}" Margin="0,0,8,0" />
+          <TextBlock DockPanel.Dock="Right" Text="{Binding MemoDateCaption}" FontSize="11"
+                     Foreground="{DynamicResource ShortcutLabelBrush}" Margin="8,0,0,0" VerticalAlignment="Center" />
+          <Border Height="1" VerticalAlignment="Center" Background="#39D9CAFF" />
+        </DockPanel>
+        <Border x:Name="MemoBody" Grid.Row="4" Background="#1807091B" CornerRadius="5" Padding="2">
+          <TextBox x:Name="NoteInput" Style="{StaticResource WidgetEditor}" FontSize="11" Padding="3,1" Tag="메모 입력" AcceptsReturn="True"
+                   TextWrapping="Wrap" VerticalScrollBarVisibility="Auto" AutomationProperties.Name="선택한 날짜의 메모"
+                   Text="{Binding Day.Note, UpdateSourceTrigger=PropertyChanged}" />
+        </Border>
+        <TextBlock Grid.Row="5" Foreground="#FFFFC6B6" FontSize="11" Margin="0,5,0,0" TextWrapping="Wrap"
+                   Visibility="{Binding SaveFailed, Converter={StaticResource WidgetBooleanVisibility}}"
+                   Text="저장할 수 없습니다. 다시 시도 중입니다." AutomationProperties.LiveSetting="Polite" />
+      </Grid>
+    </Border>
+    <Border x:Name="DockHost" Grid.Row="1" Visibility="Collapsed" ClipToBounds="True" />
+    <local:WidgetResizeLayer x:Name="ResizeLayer" Grid.RowSpan="2" />
+  </Grid>
+</Window>

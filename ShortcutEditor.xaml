@@ -1,0 +1,41 @@
+<Window x:Class="DesktopShortcuts.ShortcutEditor"
+        xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        Title="바로가기 추가" Width="472" SizeToContent="Height"
+        ResizeMode="NoResize" ShowInTaskbar="True" WindowStartupLocation="CenterScreen"
+        FontFamily="Segoe UI, Malgun Gothic" FontSize="14" UseLayoutRounding="True"
+        KeyboardNavigation.TabNavigation="Cycle">
+  <StackPanel Margin="22">
+    <StackPanel x:Name="TargetSettings" Margin="0,0,0,16">
+      <TextBlock Text="연결 대상" Margin="0,0,0,7" />
+      <StackPanel Orientation="Horizontal" Margin="0,0,0,16">
+        <RadioButton x:Name="FolderOption" Content="폴더" GroupName="Kind"
+                     Margin="0,0,24,0" IsChecked="True" />
+        <RadioButton x:Name="ProgramOption" Content="프로그램" GroupName="Kind" Margin="0,0,24,0" />
+        <RadioButton x:Name="CalendarOption" Content="달력" GroupName="Kind" />
+      </StackPanel>
+      <StackPanel x:Name="PathSettings">
+        <Label Target="{Binding ElementName=TargetInput}" Padding="0" Margin="0,0,0,6">경로</Label>
+        <DockPanel Margin="0,0,0,16">
+          <Button DockPanel.Dock="Right" Content="찾아보기…" MinWidth="86" Padding="8,4"
+                  Margin="8,0,0,0" Click="Browse" />
+          <TextBox x:Name="TargetInput" Padding="5,4" VerticalContentAlignment="Center" />
+        </DockPanel>
+      </StackPanel>
+      <Label Target="{Binding ElementName=NameInput}" Padding="0" Margin="0,0,0,6">표시할 이름</Label>
+      <TextBox x:Name="NameInput" Padding="5,4" VerticalContentAlignment="Center" />
+    </StackPanel>
+    <StackPanel x:Name="UsedSizeSettings" Margin="0,0,0,12">
+      <Label Target="{Binding ElementName=UsedSizeInput}" Padding="0" Margin="0,0,0,6">사용 중인 크기</Label>
+      <ComboBox x:Name="UsedSizeInput" Padding="5,3" />
+    </StackPanel>
+    <Label Target="{Binding ElementName=SideInput}" Padding="0" Margin="0,0,0,6">한 변의 길이 (px)</Label>
+    <TextBox x:Name="SideInput" Padding="5,4" InputScope="Number" />
+    <TextBlock x:Name="ErrorText" Visibility="Collapsed" Foreground="#A02020"
+               TextWrapping="Wrap" Margin="0,10,0,0" AutomationProperties.LiveSetting="Polite" />
+    <StackPanel Orientation="Horizontal" HorizontalAlignment="Right" Margin="0,20,0,0">
+      <Button Content="취소" Click="Cancel" MinWidth="76" Padding="12,5" Margin="0,0,8,0" />
+      <Button Content="저장" IsDefault="True" MinWidth="76" Padding="12,5" Click="Save" />
+    </StackPanel>
+  </StackPanel>
+</Window>

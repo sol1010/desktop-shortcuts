@@ -1,0 +1,10 @@
+{
+  "CornerRadius": 8,
+  "LabelFontSize": 9,
+  "LabelColor": "#B5F6F3FF",
+  "FolderColor": "#FFC1A5FF",
+  "BackgroundStart": "#AF3A435F",
+  "BackgroundEnd": "#BF1C243B",
+  "SelectionStart": "#C04E426A",
+  "SelectionEnd": "#D02D2847"
+}
