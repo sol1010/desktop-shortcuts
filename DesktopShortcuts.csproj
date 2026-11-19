@@ -2,12 +2,15 @@
   <PropertyGroup>
     <OutputType>WinExe</OutputType>
     <TargetFramework>net10.0-windows</TargetFramework>
+    <Version>0.2.0</Version>
     <UseWPF>true</UseWPF>
     <UseWindowsForms>true</UseWindowsForms>
     <Nullable>enable</Nullable>
     <ApplicationManifest>app.manifest</ApplicationManifest>
+    <ApplicationIcon>Assets\Folder.ico</ApplicationIcon>
   </PropertyGroup>
   <ItemGroup>
+    <Resource Include="Assets\Folder.ico" />
     <None Update="appearance.json" CopyToOutputDirectory="PreserveNewest" CopyToPublishDirectory="PreserveNewest" />
   </ItemGroup>
 </Project>

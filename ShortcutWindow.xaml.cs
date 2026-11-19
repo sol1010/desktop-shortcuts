@@ -21,14 +21,15 @@ public partial class ShortcutWindow : Window
     private readonly App _app;
     private ShortcutEntry _entry;
     private bool _pressed;
-    private bool _dragging;
+    private App.ShortcutDrag? _drag;
+    private bool _reordering;
     private int _clickCount;
     private bool _previousClickCompleted;
     private Drawing.Point _pointerStart;
-    private Drawing.Point _windowStart;
-    private nint Handle => new WindowInteropHelper(this).Handle;
+    internal nint Handle => new WindowInteropHelper(this).Handle;
 
     internal ShortcutSize CurrentSize => _entry.Size;
+    internal ShortcutEntry Entry => _entry;
     internal Drawing.Rectangle ScreenBounds => NativeWindow.Bounds(Handle);
 
     internal ShortcutWindow(App app, ShortcutEntry entry)
@@ -44,7 +45,18 @@ public partial class ShortcutWindow : Window
     {
         Show();
         var savedPosition = new Drawing.Point(_entry.X ?? defaultPosition.X, _entry.Y ?? defaultPosition.Y);
-        Place(savedPosition);
+        if (_entry.GroupId is null)
+        {
+            Place(savedPosition);
+        }
+        else
+        {
+            MoveTo(savedPosition);
+        }
+        if (_entry.AlwaysOnTop)
+        {
+            NativeWindow.SetTopmost(Handle, pinned: true);
+        }
     }
 
     internal void FitOnScreen()
@@ -56,11 +68,19 @@ public partial class ShortcutWindow : Window
     {
         bool refreshIcon = entry.Kind != _entry.Kind || entry.TargetPath != _entry.TargetPath;
         bool layoutChanged = entry.Size != _entry.Size;
+        bool pinChanged = entry.AlwaysOnTop != _entry.AlwaysOnTop;
         Apply(entry, refreshIcon);
+        if (pinChanged && IsVisible)
+        {
+            NativeWindow.SetTopmost(Handle, entry.AlwaysOnTop);
+        }
         if (layoutChanged)
         {
             UpdateLayout();
-            FitOnScreen();
+            if (entry.GroupId is null)
+            {
+                FitOnScreen();
+            }
         }
     }
 
@@ -73,6 +93,7 @@ public partial class ShortcutWindow : Window
         // Scale the whole tile at the smallest sizes so its contents keep their proportions.
         int layoutSide = Math.Max(side, 32);
         Tile.Width = Tile.Height = layoutSide;
+        Tile.Transparency = entry.BackgroundTransparency;
         double paddingScale = Math.Min(1, layoutSide / 48.0);
         Tile.Padding = new Thickness(5 * paddingScale, 4 * paddingScale, 5 * paddingScale, 7 * paddingScale);
         IconFace.MaxWidth = IconFace.MaxHeight = Math.Min(layoutSide * 0.43, 34);
@@ -100,7 +121,8 @@ public partial class ShortcutWindow : Window
         MenuItem open = Item("열기", OpenTarget);
         MenuItem newTab = OpenModeItem("새 탭에서 열기", FolderOpenMode.NewTab);
         MenuItem newWindow = OpenModeItem("새 창에서 열기", FolderOpenMode.NewWindow);
-        var topmost = Item("항상 위", () => _app.UpdateShortcut(_entry with { AlwaysOnTop = !_entry.AlwaysOnTop }));
+        var topmost = Item("항상 위", () =>
+            _app.UpdateShortcutGroup(_entry, entry => entry with { AlwaysOnTop = !_entry.AlwaysOnTop }));
         topmost.IsCheckable = true;
 
         var size = new MenuItem { Header = "크기" };
@@ -124,14 +146,21 @@ public partial class ShortcutWindow : Window
         menu.Items.Add(newWindow);
         menu.Items.Add(new Separator());
         menu.Items.Add(topmost);
+        menu.Items.Add(Tile.CreateTransparencyMenu(value =>
+            _app.UpdateShortcutGroup(_entry, entry => entry with { BackgroundTransparency = value })));
         menu.Items.Add(size);
         menu.Items.Add(activation);
+        MenuItem detach = Item("묶음에서 분리", () => _app.DetachShortcut(_entry));
+        menu.Items.Add(detach);
         menu.Items.Add(Item("이름 및 연결 변경…", () => _app.ShowEditor(_entry, this)));
         menu.Items.Add(new Separator());
         menu.Items.Add(Item("새 버튼 추가…", () => _app.ShowEditor(null, this)));
-        menu.Items.Add(Item("투두 목록 열기", () => _app.ShowTodo()));
+        menu.Items.Add(Item("할 일 목록 열기", () => _app.ShowTodo()));
         MenuItem showCalendar = Item("달력 열기", () => _app.ShowCalendar());
         menu.Items.Add(showCalendar);
+        MenuItem startup = Item(WindowsStartup.MenuLabel, () => _app.ToggleWindowsStartup(this));
+        startup.IsCheckable = true;
+        menu.Items.Add(startup);
         menu.Items.Add(Item("버튼 제거", () => _app.RemoveShortcut(_entry.Id, this)));
 
         menu.Opened += (_, _) =>
@@ -145,9 +174,15 @@ public partial class ShortcutWindow : Window
             small.IsChecked = _entry.Size == ShortcutSize.Small;
             medium.IsChecked = _entry.Size == ShortcutSize.Medium;
             large.IsChecked = _entry.Size == ShortcutSize.Large;
-            size.Header = $"크기 ({_entry.Size})";
+            bool grouped = _entry.GroupId is not null;
+            topmost.Header = grouped ? "묶음 항상 위" : "항상 위";
+            detach.Visibility = grouped ? Visibility.Visible : Visibility.Collapsed;
+            size.Header = grouped ? "묶음 크기" : $"크기 ({_entry.Size})";
+            activation.Header = grouped ? "묶음 열기 동작" : "열기 동작";
             doubleClick.IsChecked = _entry.Activation == ShortcutActivation.DoubleClick;
             singleClick.IsChecked = _entry.Activation == ShortcutActivation.SingleClick;
+            startup.IsEnabled = App.TryReadWindowsStartup(out bool startupEnabled);
+            startup.IsChecked = startupEnabled;
         };
 
         return menu;
@@ -162,14 +197,14 @@ public partial class ShortcutWindow : Window
 
     private MenuItem SizeItem(string label, ShortcutSize size)
     {
-        var item = Item(label, () => _app.UpdateShortcut(_entry with { Size = size }));
+        var item = Item(label, () => _app.UpdateShortcutGroup(_entry, entry => entry with { Size = size }));
         item.IsCheckable = true;
         return item;
     }
 
     private MenuItem ActivationItem(string label, ShortcutActivation activation)
     {
-        var item = Item(label, () => _app.UpdateShortcut(_entry with { Activation = activation }));
+        var item = Item(label, () => _app.UpdateShortcutGroup(_entry, entry => entry with { Activation = activation }));
         item.IsCheckable = true;
         return item;
     }
@@ -186,8 +221,8 @@ public partial class ShortcutWindow : Window
         e.Handled = true;
         _clickCount = e.ClickCount;
         _pointerStart = NativeWindow.CursorPosition;
-        _windowStart = NativeWindow.Bounds(Handle).Location;
-        _dragging = false;
+        _drag = null;
+        _reordering = false;
         _pressed = Surface.CaptureMouse();
         if (!_pressed)
         {
@@ -205,26 +240,27 @@ public partial class ShortcutWindow : Window
         Drawing.Point cursor = NativeWindow.CursorPosition;
         int dx = cursor.X - _pointerStart.X;
         int dy = cursor.Y - _pointerStart.Y;
-        if (!_dragging)
+        if (_drag is null)
         {
             DpiScale dpi = VisualTreeHelper.GetDpi(this);
-            _dragging = Math.Abs(dx) >= SystemParameters.MinimumHorizontalDragDistance * dpi.DpiScaleX ||
-                        Math.Abs(dy) >= SystemParameters.MinimumVerticalDragDistance * dpi.DpiScaleY;
+            if (Math.Abs(dx) < SystemParameters.MinimumHorizontalDragDistance * dpi.DpiScaleX &&
+                Math.Abs(dy) < SystemParameters.MinimumVerticalDragDistance * dpi.DpiScaleY)
+            {
+                return;
+            }
+
+            _drag = _app.BeginShortcutDrag(this);
+            _reordering = _drag.Windows.Length > 1 && Keyboard.Modifiers.HasFlag(ModifierKeys.Control);
         }
 
-        if (_dragging)
+        if (_reordering)
         {
-            NativeWindow.Move(Handle, DragPosition(dx, dy));
+            _app.PreviewShortcutReorder(_drag, cursor);
         }
-    }
-
-    private Drawing.Point DragPosition(int dx, int dy)
-    {
-        var position = new Drawing.Point(_windowStart.X + dx, _windowStart.Y + dy);
-        var bounds = new Drawing.Rectangle(position, ScreenBounds.Size);
-        DpiScale dpi = VisualTreeHelper.GetDpi(this);
-        return ShortcutSnap.FindPosition(bounds, _app.GetNeighborBounds(this),
-            NativeWindow.WorkingArea(bounds), dpi.DpiScaleX, dpi.DpiScaleY);
+        else
+        {
+            _app.PreviewShortcutDrag(_drag, dx, dy);
+        }
     }
 
     private void Release(object sender, MouseButtonEventArgs e)
@@ -235,24 +271,28 @@ public partial class ShortcutWindow : Window
         }
 
         e.Handled = true;
-        bool moved = _dragging;
+        App.ShortcutDrag? drag = _drag;
+        bool reorder = _reordering;
         bool overButton = Surface.InputHitTest(e.GetPosition(Surface)) is not null;
         bool launch = _entry.Activation == ShortcutActivation.SingleClick
             ? _clickCount == 1
             : _clickCount == 2 && _previousClickCompleted;
-        _previousClickCompleted = !moved && overButton && _clickCount == 1;
+        _previousClickCompleted = drag is null && overButton && _clickCount == 1;
         _pressed = false;
-        _dragging = false;
+        _drag = null;
+        _reordering = false;
         Surface.ReleaseMouseCapture();
 
-        if (moved)
+        if (drag is not null)
         {
             Drawing.Point cursor = NativeWindow.CursorPosition;
-            Place(DragPosition(cursor.X - _pointerStart.X, cursor.Y - _pointerStart.Y));
-            Drawing.Point position = NativeWindow.Bounds(Handle).Location;
-            if (!_app.UpdateShortcut(_entry with { X = position.X, Y = position.Y }))
+            if (reorder)
             {
-                Place(_windowStart);
+                _app.CompleteShortcutReorder(drag, cursor);
+            }
+            else
+            {
+                _app.CompleteShortcutDrag(drag, cursor.X - _pointerStart.X, cursor.Y - _pointerStart.Y);
             }
         }
         else if (overButton && launch)
@@ -266,19 +306,26 @@ public partial class ShortcutWindow : Window
         if (_pressed)
         {
             _previousClickCompleted = false;
-            if (_dragging)
+            if (_drag is { } drag)
             {
-                Place(_windowStart);
+                App.CancelShortcutDrag(drag);
             }
         }
 
         _pressed = false;
-        _dragging = false;
+        _drag = null;
+        _reordering = false;
     }
 
     protected override void OnKeyDown(System.Windows.Input.KeyEventArgs e)
     {
         base.OnKeyDown(e);
+        if (e.Key == Key.Escape && _drag is not null)
+        {
+            Surface.ReleaseMouseCapture();
+            e.Handled = true;
+            return;
+        }
         if (!e.IsRepeat && e.Key is Key.Enter or Key.Space)
         {
             e.Handled = true;
@@ -288,8 +335,12 @@ public partial class ShortcutWindow : Window
 
     private void Place(Drawing.Point desired)
     {
-        NativeWindow.Move(Handle, NativeWindow.KeepOnScreen(desired, NativeWindow.Bounds(Handle).Size));
+        MoveTo(NativeWindow.KeepOnScreen(desired, ScreenBounds.Size));
     }
+
+    internal void MoveTo(Drawing.Point position) => NativeWindow.Move(Handle, position);
+
+    internal void ShowReorderTarget(bool visible) => ReorderHighlight.Visibility = visible ? Visibility.Visible : Visibility.Collapsed;
 
     private void OpenTarget() => _ = OpenTargetAsync(FolderOpenMode.Default);
 

@@ -17,6 +17,8 @@ public partial class CalendarWindow : Window
     private const double StandaloneMinHeight = 146;
     private const double FoldedMinHeight = 112;
     private const double WeeklyHeightThreshold = 290;
+    private const double SingleLineMemoShare = 0;
+    private const int MaxPreviewLines = 4;
     private readonly App _app;
     private readonly TodoSession _session;
     private readonly WidgetResizer _resizer;
@@ -27,10 +29,26 @@ public partial class CalendarWindow : Window
     private bool _largeView;
     private bool _largeOnRight;
     private bool _allowClose;
+    private TodoWindow? _dockedTodo;
+    private bool _compactDock;
+    private bool _memoDragWasAuto;
+    private double? _pendingMemoShare;
+    private Button? _dropDateButton;
 
     private nint Handle => new WindowInteropHelper(this).Handle;
     private bool IsMemoFolded => _weekly && _placement.WeeklyMemoCollapsed;
     private double CalendarMinimumHeight => IsMemoFolded ? FoldedMinHeight : StandaloneMinHeight;
+    private int VisibleWeeks => _weekly ? 1
+        : ((int)FirstOfMonth(_page).DayOfWeek + DateTime.DaysInMonth(_page.Year, _page.Month) + 6) / 7;
+    private double MinimumDaysHeight => _weekly ? 32 : VisibleWeeks * (_largeView ? 36 : 24);
+    private double NoteLineHeight => Math.Ceiling(NoteInput.FontFamily.LineSpacing * NoteInput.FontSize)
+        + NoteInput.Padding.Top + NoteInput.Padding.Bottom;
+    private double MinimumMemoHeight => NoteLineHeight + MemoBody.Padding.Top + MemoBody.Padding.Bottom;
+    private double AvailableSectionHeight => CalendarLayout.ActualHeight - CalendarHeadingRow.ActualHeight
+        - WeekdayRow.ActualHeight - MemoHeadingRow.ActualHeight - CalendarStatusRow.ActualHeight;
+    private double? SavedMemoShare => _largeView ? _placement.LargeMemoShare
+        : _weekly ? _placement.WeeklyMemoShare ?? _placement.MonthlyMemoShare : _placement.MonthlyMemoShare;
+    private double ExpandedTodoHeight => Math.Max(_dockedTodo!.MinHeight, _session.Board.Height ?? _dockedTodo.StandaloneHeight);
 
     internal CalendarWindow(App app, TodoSession session)
     {
@@ -53,12 +71,20 @@ public partial class CalendarWindow : Window
             SetManualSize(PreferredDimension(_placement.Width, MinWidth, SystemParameters.VirtualScreenWidth, Width), height);
         }
 
-        _resizer = new WidgetResizer(this, ResizeLayer, SetManualSize, RestoreAutoHeight, SaveSize);
+        _resizer = new WidgetResizer(this, ResizeLayer, SetManualSize, RestoreAutoHeight, SaveResizedSize);
+        _ = new WidgetSectionResizer(MemoDivider, CalendarLayout, DaysRow, PreviewMemoSplit, FinishMemoResize);
+        Card.Transparency = _placement.BackgroundTransparency;
         Card.ContextMenu = BuildWindowMenu();
         DayGrid.ItemsSource = _cells;
         session.PropertyChanged += SessionChanged;
-        session.NoteChanged += RefreshSelectedPreview;
-        Card.SizeChanged += (_, args) => UpdateViewForHeight(args.NewSize.Height);
+        session.CalendarNoteChanged += CalendarNoteChanged;
+        session.DragEnded += ClearDateDropPreview;
+        Card.SizeChanged += (_, args) =>
+        {
+            UpdateViewForHeight(args.NewSize.Height);
+            UpdateContentLayout();
+        };
+        DayGrid.SizeChanged += (_, _) => UpdatePreviewLayout();
         RenderPage();
     }
 
@@ -97,7 +123,7 @@ public partial class CalendarWindow : Window
     }
 
     internal Drawing.Rectangle ScreenBounds => NativeWindow.Bounds(Handle);
-    internal bool HasDockedTodo => DockHost.Child is not null;
+    internal bool HasDockedTodo => _dockedTodo is not null;
 
     internal void FitOnScreen()
     {
@@ -165,8 +191,7 @@ public partial class CalendarWindow : Window
         DpiScale dpi = VisualTreeHelper.GetDpi(this);
         if (HasDockedTodo)
         {
-            CalendarPanelRow.Height = new GridLength(3, GridUnitType.Star);
-            TodoPanelRow.Height = new GridLength(1, GridUnitType.Star);
+            ConfigureDockRows(Card.ActualHeight, ExpandedTodoHeight);
         }
 
         SetManualSize(bounds.Width / dpi.DpiScaleX, bounds.Height / dpi.DpiScaleY);
@@ -182,10 +207,7 @@ public partial class CalendarWindow : Window
         double height = PreferredDimension(_placement.Height, CalendarMinimumHeight, SystemParameters.VirtualScreenHeight, 450);
         if (HasDockedTodo)
         {
-            double todoPane = Math.Max(TodoPanelRow.MinHeight, (_session.Board.Height ?? 180) + WidgetDockGeometry.Gap);
-            CalendarPanelRow.Height = new GridLength(height, GridUnitType.Star);
-            TodoPanelRow.Height = new GridLength(todoPane, GridUnitType.Star);
-            height += todoPane;
+            height += ConfigureDockRows(height, ExpandedTodoHeight);
         }
 
         SetManualSize(width, height);
@@ -209,31 +231,59 @@ public partial class CalendarWindow : Window
         double calendarHeight = Math.Max(CalendarMinimumHeight, Card.ActualHeight > 0 ? Card.ActualHeight : _placement.Height ?? 450);
         double todoHeight = Math.Max(todo.MinHeight, todo.StandaloneHeight);
         double width = Math.Max(MinWidth, ActualWidth > 0 ? ActualWidth : Width);
-        double gap = WidgetDockGeometry.Gap;
-
-        DockHost.Margin = new Thickness(0, gap, 0, 0);
-        DockHost.Child = todo.MoveSurfaceToCalendar(width, todoHeight);
+        _dockedTodo = todo;
+        _session.Board.SizeManuallySet ??= _session.Board.KeepsEmptySize;
+        _compactDock = _session.ShouldCompactEmptyTodo;
+        _session.Board.Height ??= todoHeight;
+        DockHost.Margin = new Thickness(0, WidgetDockGeometry.Gap, 0, 0);
+        DockHost.Child = todo.MoveSurfaceToCalendar(this, width, todoHeight);
         DockHost.Visibility = Visibility.Visible;
-        CalendarPanelRow.MinHeight = CalendarMinimumHeight;
-        CalendarPanelRow.Height = new GridLength(calendarHeight, GridUnitType.Star);
-        TodoPanelRow.MinHeight = todo.MinHeight + gap;
-        TodoPanelRow.Height = new GridLength(todoHeight + gap, GridUnitType.Star);
-        MinHeight = CalendarMinimumHeight + todo.MinHeight + gap;
+        double todoPane = ConfigureDockRows(calendarHeight, todoHeight);
         if (_largeView)
         {
             _session.Board.Width ??= _placement.Width ?? 354;
-            _session.Board.Height ??= todoHeight;
             FitOnScreen();
             return;
         }
 
-        SetManualSize(width, calendarHeight + todoHeight + gap);
+        SetManualSize(width, calendarHeight + todoPane);
 
         if (IsVisible)
         {
             FitOnScreen();
             UpdateLayout();
             SaveSize();
+        }
+    }
+
+    private double ConfigureDockRows(double calendarHeight, double todoHeight)
+    {
+        double gap = WidgetDockGeometry.Gap;
+        double minimumTodo = _compactDock ? TodoWindow.EmptyDockHeight : _dockedTodo!.MinHeight;
+        double todoPane = (_compactDock ? minimumTodo : Math.Max(minimumTodo, todoHeight)) + gap;
+        CalendarPanelRow.MinHeight = CalendarMinimumHeight;
+        CalendarPanelRow.Height = new GridLength(_largeView ? 3 : calendarHeight, GridUnitType.Star);
+        TodoPanelRow.MinHeight = minimumTodo + gap;
+        TodoPanelRow.Height = _compactDock ? new GridLength(todoPane) : new GridLength(_largeView ? 1 : todoPane, GridUnitType.Star);
+        MinHeight = CalendarMinimumHeight + TodoPanelRow.MinHeight;
+        return todoPane;
+    }
+
+    private void UpdateDockedTodoLayout()
+    {
+        bool compact = _session.ShouldCompactEmptyTodo;
+        if (!HasDockedTodo || _compactDock == compact)
+        {
+            return;
+        }
+
+        double calendarHeight = Card.ActualHeight > 0 ? Card.ActualHeight : _placement.Height ?? 450;
+        _compactDock = compact;
+        double todoPane = ConfigureDockRows(calendarHeight, ExpandedTodoHeight);
+        if (!_largeView)
+        {
+            SetManualSize(Width, calendarHeight + todoPane);
+            FitOnScreen();
         }
     }
 
@@ -248,6 +298,7 @@ public partial class CalendarWindow : Window
         }
 
         SaveSize();
+        _dockedTodo = null;
         DockHost.Child = null;
         DockHost.Visibility = Visibility.Collapsed;
         TodoPanelRow.MinHeight = 0;
@@ -277,19 +328,112 @@ public partial class CalendarWindow : Window
         if (SizeToContent != SizeToContent.Manual)
         {
             SizeToContent = SizeToContent.Manual;
-            ConfigureManualRows();
+            UpdateContentLayout();
         }
 
         Width = width;
         Height = height;
     }
 
-    private void ConfigureManualRows()
+    private void UpdateContentLayout()
     {
-        DaysRow.Height = _weekly ? new GridLength(IsMemoFolded ? 32 : 34) : new GridLength(_largeView ? 3 : 4, GridUnitType.Star);
-        DaysRow.MinHeight = _weekly ? 24 : 144;
-        CalendarMemoRow.Height = IsMemoFolded ? new GridLength(0) : new GridLength(_largeView ? 2 : 1, GridUnitType.Star);
-        CalendarMemoRow.MinHeight = IsMemoFolded ? 0 : _largeView ? 90 : _weekly ? 26 : 36;
+        bool manual = SizeToContent == SizeToContent.Manual;
+        bool folded = IsMemoFolded;
+        double? share = manual && !folded ? _pendingMemoShare ?? SavedMemoShare : null;
+        if (share is double split && split is >= SingleLineMemoShare and < 1)
+        {
+            DaysRow.MinHeight = MinimumDaysHeight;
+            DaysRow.Height = new GridLength(1 - split, GridUnitType.Star);
+            CalendarMemoRow.Height = split == SingleLineMemoShare
+                ? new GridLength(MinimumMemoHeight) : new GridLength(split, GridUnitType.Star);
+            CalendarMemoRow.MinHeight = MinimumMemoHeight;
+            return;
+        }
+
+        DaysRow.MinHeight = manual ? _weekly ? MinimumDaysHeight : VisibleWeeks * 24 : 0;
+        DaysRow.Height = manual ? new GridLength(_largeView ? 3 : 4, GridUnitType.Star)
+            : new GridLength(_weekly ? MinimumDaysHeight : 270);
+        bool expandMemo = manual && !_weekly;
+        double memoHeight = folded ? 0 : MinimumMemoHeight;
+        CalendarMemoRow.Height = expandMemo
+            ? new GridLength(_largeView ? 2 : 1.2, GridUnitType.Star) : new GridLength(memoHeight);
+        CalendarMemoRow.MinHeight = expandMemo ? Math.Max(_largeView ? 90 : 36, memoHeight) : memoHeight;
+    }
+
+    private bool PreviewMemoSplit(double daysHeight)
+    {
+        double available = AvailableSectionHeight;
+        double maximumDaysHeight = available - MinimumMemoHeight;
+        if (IsMemoFolded || maximumDaysHeight <= MinimumDaysHeight)
+        {
+            return false;
+        }
+
+        double? pending = daysHeight >= maximumDaysHeight - 0.5
+            ? SingleLineMemoShare : WidgetSectionResizer.GetBottomShare(available, daysHeight, DaysRow.ActualHeight,
+                MinimumDaysHeight, MinimumMemoHeight);
+        if (pending is not double share || share == (_pendingMemoShare ?? SavedMemoShare))
+        {
+            return false;
+        }
+
+        if (_pendingMemoShare is null)
+        {
+            _memoDragWasAuto = SizeToContent != SizeToContent.Manual;
+        }
+
+        _pendingMemoShare = share;
+        if (SizeToContent != SizeToContent.Manual)
+        {
+            SetManualSize(Width, Card.ActualHeight);
+        }
+
+        UpdateContentLayout();
+        return true;
+    }
+
+    private void FinishMemoResize(bool canceled)
+    {
+        if (_pendingMemoShare is not double share)
+        {
+            return;
+        }
+
+        _pendingMemoShare = null;
+        if (!canceled)
+        {
+            SaveMemoSplit(share);
+        }
+        else if (_memoDragWasAuto)
+        {
+            RestoreAutoHeight(Width);
+        }
+        else
+        {
+            UpdateContentLayout();
+        }
+    }
+
+    private void SaveMemoSplit(double share)
+    {
+        if (_largeView)
+        {
+            _placement.LargeMemoShare = share;
+            _session.QueueSave();
+        }
+        else
+        {
+            if (_weekly)
+            {
+                _placement.WeeklyMemoShare = share;
+            }
+            else
+            {
+                _placement.MonthlyMemoShare = share;
+            }
+
+            SaveSize();
+        }
     }
 
     private void RefreshMemoLayout()
@@ -300,8 +444,11 @@ public partial class CalendarWindow : Window
         MemoToggle.Content = folded ? "▸ 메모" : "▾ 메모";
         MemoToggle.ToolTip = folded ? "메모 펼치기" : "메모 접기";
         AutomationProperties.SetName(MemoToggle, (string)MemoToggle.ToolTip);
-        MemoHeader.Margin = folded ? new Thickness(0, 2, 0, 0) : new Thickness(0, 4, 0, 4);
+        MemoHeader.Margin = new Thickness(0, 2, 0, folded ? 0 : 2);
+        MemoDivider.Visibility = folded ? Visibility.Collapsed : Visibility.Visible;
         MemoBody.Visibility = folded ? Visibility.Collapsed : Visibility.Visible;
+        UpdateContentLayout();
+        UpdatePreviewLayout();
 
         if (HasDockedTodo)
         {
@@ -309,10 +456,6 @@ public partial class CalendarWindow : Window
         }
 
         MinHeight = CalendarMinimumHeight + (HasDockedTodo ? TodoPanelRow.MinHeight : 0);
-        if (SizeToContent == SizeToContent.Manual)
-        {
-            ConfigureManualRows();
-        }
     }
 
     private void ToggleMemo(object sender, RoutedEventArgs e)
@@ -341,10 +484,8 @@ public partial class CalendarWindow : Window
         RefreshMemoLayout();
         if (HasDockedTodo)
         {
-            double todoHeight = DockHost.ActualHeight > 0 ? DockHost.ActualHeight : _session.Board.Height ?? 180;
-            CalendarPanelRow.Height = new GridLength(desired, GridUnitType.Star);
-            TodoPanelRow.Height = new GridLength(todoHeight + WidgetDockGeometry.Gap, GridUnitType.Star);
-            desired += todoHeight + WidgetDockGeometry.Gap;
+            double todoHeight = !_compactDock && DockHost.ActualHeight > 0 ? DockHost.ActualHeight : ExpandedTodoHeight;
+            desired += ConfigureDockRows(desired, todoHeight);
         }
 
         SetManualSize(Width, desired);
@@ -357,11 +498,19 @@ public partial class CalendarWindow : Window
     {
         Width = width;
         Height = double.NaN;
-        DaysRow.Height = new GridLength(270);
-        DaysRow.MinHeight = 0;
-        CalendarMemoRow.Height = new GridLength(80);
-        CalendarMemoRow.MinHeight = 0;
         SizeToContent = SizeToContent.Height;
+        UpdateViewForHeight(WeeklyHeightThreshold);
+        UpdateContentLayout();
+    }
+
+    private void SaveResizedSize()
+    {
+        if (HasDockedTodo && !_compactDock && !_largeView)
+        {
+            _session.Board.SizeManuallySet = true;
+        }
+
+        SaveSize();
     }
 
     private void SaveSize()
@@ -376,7 +525,10 @@ public partial class CalendarWindow : Window
         {
             _placement.Height = Card.ActualHeight > 0 ? Card.ActualHeight : _placement.Height ?? 450;
             _session.Board.Width = Width;
-            _session.Board.Height = DockHost.ActualHeight > 0 ? DockHost.ActualHeight : _session.Board.Height ?? 180;
+            if (!_compactDock && DockHost.ActualHeight > 0)
+            {
+                _session.Board.Height = DockHost.ActualHeight;
+            }
         }
         else if (double.IsFinite(Height))
         {
@@ -412,7 +564,8 @@ public partial class CalendarWindow : Window
     protected override void OnClosed(EventArgs e)
     {
         _session.PropertyChanged -= SessionChanged;
-        _session.NoteChanged -= RefreshSelectedPreview;
+        _session.CalendarNoteChanged -= CalendarNoteChanged;
+        _session.DragEnded -= ClearDateDropPreview;
         base.OnClosed(e);
     }
 
@@ -431,15 +584,25 @@ public partial class CalendarWindow : Window
         var hide = new MenuItem { Header = "달력 숨기기" };
         hide.Click += (_, _) => HideCalendar();
         menu.Items.Add(pin);
+        menu.Items.Add(Card.CreateTransparencyMenu(SetBackgroundTransparency));
         menu.Items.Add(hide);
         menu.Opened += (_, _) =>
         {
             large.IsChecked = _largeView;
             normal.IsChecked = !_largeView;
             pin.IsChecked = _placement.AlwaysOnTop;
-            hide.Header = HasDockedTodo ? "달력·투두 숨기기" : "달력 숨기기";
+            hide.Header = HasDockedTodo ? "달력·할 일 숨기기" : "달력 숨기기";
         };
         return menu;
+    }
+
+    internal bool SetBackgroundTransparency(int? value)
+    {
+        _placement.BackgroundTransparency = value;
+        Card.Transparency = value;
+        _dockedTodo?.ApplyBackgroundTransparency(value);
+        _session.QueueSave();
+        return true;
     }
 
     internal void HideCalendar()
@@ -522,17 +685,74 @@ public partial class CalendarWindow : Window
         }
     }
 
+    private void DragOverDate(object sender, DragEventArgs e)
+    {
+        bool allowed = sender is Button { DataContext: CalendarCell { IsDate: true } cell } &&
+            _session.ReadDrag(e.Data) is { } drag && _session.CanMoveToDate(drag, cell.Date);
+        SetDateDropPreview(allowed ? (Button)sender : null);
+        e.Effects = allowed ? DragDropEffects.Move : DragDropEffects.None;
+        e.Handled = true;
+    }
+
+    private void DropOnDate(object sender, DragEventArgs e)
+    {
+        SetDateDropPreview(null);
+        bool moved = sender is FrameworkElement { DataContext: CalendarCell { IsDate: true } cell } &&
+            _session.ReadDrag(e.Data) is { } drag && _session.MoveToDate(drag, cell.Date);
+        if (moved)
+        {
+            RenderPage();
+        }
+        e.Effects = moved ? DragDropEffects.Move : DragDropEffects.None;
+        e.Handled = true;
+    }
+
+    private void LeaveDate(object sender, DragEventArgs e)
+    {
+        if (sender == _dropDateButton)
+        {
+            SetDateDropPreview(null);
+        }
+    }
+
+    private void ClearDateDropPreview(object? sender, EventArgs e) => SetDateDropPreview(null);
+
+    private void SetDateDropPreview(Button? button)
+    {
+        if (_dropDateButton == button)
+        {
+            return;
+        }
+
+        _dropDateButton?.ClearValue(FrameworkElement.TagProperty);
+        _dropDateButton = button;
+        if (button is not null)
+        {
+            button.Tag = "DropTarget";
+        }
+    }
+
     private void SessionChanged(object? sender, PropertyChangedEventArgs e)
     {
         if (e.PropertyName == nameof(TodoSession.Date))
         {
             ChangePage(_session.Date);
         }
+        else if (e.PropertyName == nameof(TodoSession.HasTodoContent))
+        {
+            UpdateDockedTodoLayout();
+            RefreshSelectedCell();
+        }
     }
 
     private void ChangePage(DateOnly date)
     {
+        int previousWeeks = VisibleWeeks;
         _page = date;
+        if (VisibleWeeks != previousWeeks)
+        {
+            UpdateContentLayout();
+        }
         RenderPage();
     }
 
@@ -557,8 +777,33 @@ public partial class CalendarWindow : Window
 
     private int WeekStart => _page.DayNumber - (int)_page.DayOfWeek;
 
+    private void UpdatePreviewLayout()
+    {
+        double previewFontSize = (double)Resources["CalendarPreviewFontSize"];
+        double dateFontSize = (double)Resources["CalendarDayFontSize"];
+        double lineHeight = Math.Ceiling(previewFontSize * FontFamily.LineSpacing);
+        double dateHeight = Math.Ceiling(dateFontSize * FontFamily.LineSpacing);
+        double previewSpace = DayGrid.ActualHeight / VisibleWeeks - dateHeight - 6;
+        int lines = Math.Clamp((int)(previewSpace / lineHeight), 1, MaxPreviewLines);
+        double cellWidth = DayGrid.ActualWidth / 7 - 6;
+        bool expanded = !IsMemoFolded && previewSpace >= lineHeight
+            && (lines > 1 || cellWidth >= 6 * previewFontSize);
+        Visibility expandedVisibility = expanded ? Visibility.Visible : Visibility.Collapsed;
+        double previewHeight = lines * lineHeight;
+        if (Equals(Resources["ExpandedCalendarPreviewVisibility"], expandedVisibility)
+            && Equals(Resources["CalendarPreviewHeight"], previewHeight))
+        {
+            return;
+        }
+
+        Resources["CompactCalendarPreviewVisibility"] = expanded ? Visibility.Collapsed : Visibility.Visible;
+        Resources["ExpandedCalendarPreviewVisibility"] = expandedVisibility;
+        Resources["CalendarPreviewHeight"] = previewHeight;
+    }
+
     private void RenderPage()
     {
+        SetDateDropPreview(null);
         DateOnly month = FirstOfMonth(_page);
         int first = _weekly ? WeekStart : month.DayNumber - (int)month.DayOfWeek;
         if (_weekly)
@@ -581,7 +826,7 @@ public partial class CalendarWindow : Window
 
         DateOnly today = DateOnly.FromDateTime(DateTime.Today);
         _cells.Clear();
-        int count = _weekly ? 7 : 42;
+        int count = VisibleWeeks * 7;
         for (int index = 0; index < count; index++)
         {
             int number = first + index;
@@ -589,30 +834,45 @@ public partial class CalendarWindow : Window
             DateOnly date = valid ? DateOnly.FromDayNumber(number) : default;
             bool isDate = valid && (_weekly || date.Month == month.Month);
             _cells.Add(new CalendarCell(date, isDate, date == _session.Date, date == today,
-                isDate ? _session.Preview(date) : ""));
+                isDate ? _session.Preview(date) : "", isDate ? GetExpandedPreview(date) : "",
+                isDate && _session.HasTodoItems(date)));
         }
+
+        UpdatePreviewLayout();
     }
 
     private static DateOnly DateAt(int dayNumber) =>
         DateOnly.FromDayNumber(Math.Clamp(dayNumber, 0, DateOnly.MaxValue.DayNumber));
 
-    private void RefreshSelectedPreview(object? sender, EventArgs e)
+    private void CalendarNoteChanged(object? sender, EventArgs e) => RefreshSelectedCell();
+
+    private void RefreshSelectedCell()
     {
         for (int i = 0; i < _cells.Count; i++)
         {
             if (_cells[i] is { IsDate: true } cell && cell.Date == _session.Date)
             {
-                _cells[i] = cell with { Preview = _session.Preview(cell.Date) };
+                string preview = _session.Preview(cell.Date);
+                string expandedPreview = GetExpandedPreview(cell.Date);
+                bool hasTodoItems = _session.HasTodoItems(cell.Date);
+                if (cell.Preview != preview || cell.ExpandedPreview != expandedPreview || cell.HasTodoItems != hasTodoItems)
+                {
+                    _cells[i] = cell with { Preview = preview, ExpandedPreview = expandedPreview, HasTodoItems = hasTodoItems };
+                }
                 return;
             }
         }
     }
 
+    private string GetExpandedPreview(DateOnly date) => _session.GetCalendarNote(date).Trim().ReplaceLineEndings(" ");
+
     private static DateOnly FirstOfMonth(DateOnly date) => new(date.Year, date.Month, 1);
 
-    private sealed record CalendarCell(DateOnly Date, bool IsDate, bool IsSelected, bool IsToday, string Preview)
+    private sealed record CalendarCell(DateOnly Date, bool IsDate, bool IsSelected, bool IsToday, string Preview,
+        string ExpandedPreview, bool HasTodoItems)
     {
         public string Number => IsDate ? Date.Day.ToString() : "";
         public string Label => IsDate ? $"{Date.Month}월 {Date.Day}일" : "";
+        public string TodoStatus => HasTodoItems ? "할 일 있음" : "";
     }
 }

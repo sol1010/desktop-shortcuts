@@ -4,6 +4,8 @@ using System.Drawing;
 
 namespace DesktopShortcuts;
 
+internal readonly record struct ShortcutSnapMatch(Point Offset, int NeighborIndex);
+
 internal static class ShortcutSnap
 {
     internal const double Gap = 1.5;
@@ -12,60 +14,78 @@ internal static class ShortcutSnap
     public static Point FindPosition(Rectangle moving, IReadOnlyList<Rectangle> neighbors,
         Rectangle workingArea, double dpiX, double dpiY)
     {
-        int gapX = (int)Math.Round(Gap * dpiX, MidpointRounding.AwayFromZero);
-        int gapY = (int)Math.Round(Gap * dpiY, MidpointRounding.AwayFromZero);
+        Point offset = FindMatch([moving], neighbors, workingArea, dpiX, dpiY)?.Offset ?? Point.Empty;
+        return new Point(moving.X + offset.X, moving.Y + offset.Y);
+    }
+
+    internal static ShortcutSnapMatch? FindMatch(IReadOnlyList<Rectangle> moving, IReadOnlyList<Rectangle> neighbors,
+        Rectangle workingArea, double dpiX, double dpiY)
+    {
+        int gapX = PixelGap(dpiX);
+        int gapY = PixelGap(dpiY);
         double reachX = SnapDistance * dpiX;
         double reachY = SnapDistance * dpiY;
-        Point best = moving.Location;
+        Rectangle group = ShortcutGroupLayout.Bounds(moving);
+        ShortcutSnapMatch? best = null;
         double bestDistance = double.PositiveInfinity;
 
-        foreach (Rectangle neighbor in neighbors)
+        foreach (Rectangle tile in moving)
         {
-            if (moving.Top < neighbor.Bottom && moving.Bottom > neighbor.Top)
+            for (int index = 0; index < neighbors.Count; index++)
             {
-                int y = Align(moving.Top, neighbor.Top, neighbor.Bottom - moving.Height, reachY);
-                Consider(neighbor.Left - moving.Width - gapX, y, horizontal: true);
-                Consider(neighbor.Right + gapX, y, horizontal: true);
-            }
+                Rectangle neighbor = neighbors[index];
+                if (tile.Top < neighbor.Bottom && tile.Bottom > neighbor.Top)
+                {
+                    int y = Align(tile.Top, neighbor.Top, neighbor.Bottom - tile.Height, reachY) - tile.Y;
+                    Consider(neighbor.Left - tile.Right - gapX, y, horizontal: true, index);
+                    Consider(neighbor.Right + gapX - tile.Left, y, horizontal: true, index);
+                }
 
-            if (moving.Left < neighbor.Right && moving.Right > neighbor.Left)
-            {
-                int x = Align(moving.Left, neighbor.Left, neighbor.Right - moving.Width, reachX);
-                Consider(x, neighbor.Top - moving.Height - gapY, horizontal: false);
-                Consider(x, neighbor.Bottom + gapY, horizontal: false);
+                if (tile.Left < neighbor.Right && tile.Right > neighbor.Left)
+                {
+                    int x = Align(tile.Left, neighbor.Left, neighbor.Right - tile.Width, reachX) - tile.X;
+                    Consider(x, neighbor.Top - tile.Bottom - gapY, horizontal: false, index);
+                    Consider(x, neighbor.Bottom + gapY - tile.Top, horizontal: false, index);
+                }
             }
         }
 
         return best;
 
-        void Consider(int x, int y, bool horizontal)
+        void Consider(int dx, int dy, bool horizontal, int index)
         {
-            int dx = x - moving.X;
-            int dy = y - moving.Y;
             if (horizontal ? Math.Abs(dx) > reachX : Math.Abs(dy) > reachY)
             {
                 return;
             }
 
             double distance = Math.Pow(dx / dpiX, 2) + Math.Pow(dy / dpiY, 2);
-            var candidate = new Rectangle(x, y, moving.Width, moving.Height);
-            if (distance >= bestDistance || !workingArea.Contains(candidate))
+            var translatedGroup = group;
+            translatedGroup.Offset(dx, dy);
+            if (distance >= bestDistance || !workingArea.Contains(translatedGroup))
             {
                 return;
             }
 
-            foreach (Rectangle neighbor in neighbors)
+            foreach (Rectangle tile in moving)
             {
-                if (candidate.IntersectsWith(neighbor))
+                Rectangle candidate = tile;
+                candidate.Offset(dx, dy);
+                foreach (Rectangle neighbor in neighbors)
                 {
-                    return;
+                    if (candidate.IntersectsWith(neighbor))
+                    {
+                        return;
+                    }
                 }
             }
 
             bestDistance = distance;
-            best = candidate.Location;
+            best = new ShortcutSnapMatch(new Point(dx, dy), index);
         }
     }
+
+    internal static int PixelGap(double dpi) => (int)Math.Round(Gap * dpi, MidpointRounding.AwayFromZero);
 
     private static int Align(int position, int firstEdge, int secondEdge, double reach)
     {

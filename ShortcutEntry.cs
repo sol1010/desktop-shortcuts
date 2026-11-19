@@ -1,6 +1,7 @@
 using System;
 using System.Collections.Generic;
 using System.IO;
+using System.Linq;
 using System.Text.Json;
 using System.Text.Json.Serialization;
 
@@ -31,6 +32,8 @@ internal readonly record struct ShortcutSize(int Width, int Height)
 
 internal sealed record ShortcutEntry
 {
+    private Guid? _groupId;
+
     public Guid Id { get; init; } = Guid.NewGuid();
     public string Name { get; init; } = "";
     public string TargetPath { get; init; } = "";
@@ -45,6 +48,18 @@ internal sealed record ShortcutEntry
 
     public ShortcutActivation Activation { get; init; } = ShortcutActivation.DoubleClick;
     public bool AlwaysOnTop { get; init; }
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public int? BackgroundTransparency { get; init; }
+    public Guid? GroupId
+    {
+        get => _groupId;
+        init
+        {
+            _groupId = value;
+            HasGroupSetting = true;
+        }
+    }
+    internal bool HasGroupSetting { get; private init; }
     public int? X { get; init; }
     public int? Y { get; init; }
 }
@@ -110,7 +125,21 @@ internal static class ShortcutStore
             }
         }
 
+        ClearSingletonGroups(entries);
         return entries;
+    }
+
+    internal static void ClearSingletonGroups(List<ShortcutEntry> entries)
+    {
+        var singletons = entries.Where(entry => entry.GroupId is not null).GroupBy(entry => entry.GroupId)
+            .Where(group => group.Count() == 1).Select(group => group.Key).ToHashSet();
+        for (int index = 0; index < entries.Count; index++)
+        {
+            if (singletons.Contains(entries[index].GroupId))
+            {
+                entries[index] = entries[index] with { GroupId = null };
+            }
+        }
     }
 
     public static void Save(IReadOnlyList<ShortcutEntry> entries) => LocalSettings.Save(FilePath, entries, JsonOptions);

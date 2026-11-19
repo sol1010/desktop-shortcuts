@@ -1,6 +1,7 @@
 <Window x:Class="DesktopShortcuts.ShortcutWindow"
         xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
         xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        xmlns:local="clr-namespace:DesktopShortcuts"
         WindowStyle="None" AllowsTransparency="True" Background="Transparent"
         ResizeMode="NoResize" ShowInTaskbar="False" ShowActivated="False"
         WindowStartupLocation="Manual" UseLayoutRounding="True">
@@ -9,17 +10,17 @@
         PreviewMouseLeftButtonUp="Release" LostMouseCapture="CancelPress"
         ToolTipService.InitialShowDelay="700">
     <Viewbox StretchDirection="DownOnly">
-      <Border x:Name="Tile" CornerRadius="{DynamicResource ShortcutCornerRadius}">
-        <Border.Style>
-          <Style TargetType="Border">
-            <Setter Property="Background" Value="{DynamicResource ShortcutBackground}" />
+      <local:WidgetCard x:Name="Tile" CornerRadius="{DynamicResource ShortcutCornerRadius}">
+        <local:WidgetCard.Style>
+          <Style TargetType="local:WidgetCard">
+            <Setter Property="ThemeBackground" Value="{DynamicResource ShortcutBackground}" />
             <Style.Triggers>
               <DataTrigger Binding="{Binding IsActive, RelativeSource={RelativeSource AncestorType=Window}}" Value="True">
-                <Setter Property="Background" Value="{DynamicResource ShortcutSelectionBackground}" />
+                <Setter Property="ThemeBackground" Value="{DynamicResource ShortcutSelectionBackground}" />
               </DataTrigger>
             </Style.Triggers>
           </Style>
-        </Border.Style>
+        </local:WidgetCard.Style>
         <Grid>
           <Grid.RowDefinitions>
             <RowDefinition Height="*" />
@@ -56,7 +57,9 @@
                      Margin="0,1,0,0" FontFamily="Malgun Gothic" FontWeight="Light"
                      FontSize="{DynamicResource ShortcutLabelFontSize}" Foreground="{DynamicResource ShortcutLabelBrush}" />
         </Grid>
-      </Border>
+      </local:WidgetCard>
     </Viewbox>
+    <Border x:Name="ReorderHighlight" BorderBrush="{DynamicResource ShortcutFolderBrush}" BorderThickness="2"
+            CornerRadius="{DynamicResource ShortcutCornerRadius}" Visibility="Collapsed" IsHitTestVisible="False" />
   </Grid>
 </Window>

@@ -16,7 +16,11 @@
         <Setter.Value>
           <ControlTemplate TargetType="Button">
             <Border x:Name="DaySurface" Background="{TemplateBinding Background}" CornerRadius="4">
-              <ContentPresenter HorizontalAlignment="Stretch" VerticalAlignment="Stretch" />
+              <Grid>
+                <Border x:Name="DateDropHighlight" CornerRadius="4" BorderThickness="2" Background="#39D9CAFF"
+                        BorderBrush="{DynamicResource ShortcutFolderBrush}" Visibility="Collapsed" IsHitTestVisible="False" />
+                <ContentPresenter HorizontalAlignment="Stretch" VerticalAlignment="Stretch" />
+              </Grid>
             </Border>
             <ControlTemplate.Triggers>
               <Trigger Property="IsMouseOver" Value="True">
@@ -25,6 +29,9 @@
               <Trigger Property="IsKeyboardFocused" Value="True">
                 <Setter TargetName="DaySurface" Property="BorderBrush" Value="{DynamicResource ShortcutFolderBrush}" />
                 <Setter TargetName="DaySurface" Property="BorderThickness" Value="1" />
+              </Trigger>
+              <Trigger Property="Tag" Value="DropTarget">
+                <Setter TargetName="DateDropHighlight" Property="Visibility" Value="Visible" />
               </Trigger>
             </ControlTemplate.Triggers>
           </ControlTemplate>
@@ -50,16 +57,16 @@
       <RowDefinition x:Name="CalendarPanelRow" Height="*" />
       <RowDefinition x:Name="TodoPanelRow" Height="Auto" />
     </Grid.RowDefinitions>
-    <Border x:Name="Card" Padding="8,6,8,8" Background="{DynamicResource ShortcutBackground}"
-            CornerRadius="{DynamicResource ShortcutCornerRadius}">
-      <Grid>
+    <local:WidgetCard x:Name="Card" Padding="8,6,8,8" ThemeBackground="{DynamicResource ShortcutBackground}"
+                      CornerRadius="{DynamicResource ShortcutCornerRadius}">
+      <Grid x:Name="CalendarLayout" ClipToBounds="True">
         <Grid.RowDefinitions>
-          <RowDefinition Height="Auto" />
-          <RowDefinition Height="Auto" />
+          <RowDefinition x:Name="CalendarHeadingRow" Height="Auto" />
+          <RowDefinition x:Name="WeekdayRow" Height="Auto" />
           <RowDefinition x:Name="DaysRow" Height="270" />
-          <RowDefinition Height="Auto" />
-          <RowDefinition x:Name="CalendarMemoRow" Height="80" />
-          <RowDefinition Height="Auto" />
+          <RowDefinition x:Name="MemoHeadingRow" Height="Auto" />
+          <RowDefinition x:Name="CalendarMemoRow" Height="Auto" />
+          <RowDefinition x:Name="CalendarStatusRow" Height="Auto" />
         </Grid.RowDefinitions>
         <DockPanel Margin="0,0,0,4">
           <Button x:Name="NextButton" DockPanel.Dock="Right" Style="{StaticResource WidgetButton}"
@@ -83,55 +90,68 @@
           <TextBlock Style="{StaticResource Weekday}" Text="금" />
           <TextBlock Style="{StaticResource Weekday}" Text="토" />
         </UniformGrid>
-        <ItemsControl x:Name="DayGrid" Grid.Row="2">
+        <ItemsControl x:Name="DayGrid" Grid.Row="2" ClipToBounds="True">
           <ItemsControl.ItemsPanel>
             <ItemsPanelTemplate><UniformGrid Columns="7" /></ItemsPanelTemplate>
           </ItemsControl.ItemsPanel>
           <ItemsControl.ItemTemplate>
             <DataTemplate>
               <Button Style="{StaticResource DayButton}" IsEnabled="{Binding IsDate}"
-                      AutomationProperties.Name="{Binding Label}" Click="SelectDate">
+                      AutomationProperties.Name="{Binding Label}" AutomationProperties.ItemStatus="{Binding TodoStatus}"
+                      Click="SelectDate" AllowDrop="True" DragEnter="DragOverDate" DragOver="DragOverDate"
+                      DragLeave="LeaveDate" Drop="DropOnDate">
                 <StackPanel VerticalAlignment="Center" Margin="2,0">
-                  <TextBlock Text="{Binding Number}" TextAlignment="Center" FontSize="{DynamicResource CalendarDayFontSize}">
-                    <TextBlock.Style>
-                      <Style TargetType="TextBlock">
-                        <Style.Triggers>
-                          <DataTrigger Binding="{Binding IsToday}" Value="True">
-                            <Setter Property="Foreground" Value="{DynamicResource ShortcutFolderBrush}" />
-                            <Setter Property="FontWeight" Value="SemiBold" />
-                          </DataTrigger>
-                        </Style.Triggers>
-                      </Style>
-                    </TextBlock.Style>
-                  </TextBlock>
-                  <Viewbox x:Name="PreviewScale" HorizontalAlignment="Center" StretchDirection="DownOnly">
+                  <Grid HorizontalAlignment="Center">
+                    <TextBlock Text="{Binding Number}" TextAlignment="Center" FontSize="{DynamicResource CalendarDayFontSize}">
+                      <TextBlock.Style>
+                        <Style TargetType="TextBlock">
+                          <Style.Triggers>
+                            <DataTrigger Binding="{Binding IsToday}" Value="True">
+                              <Setter Property="Foreground" Value="{DynamicResource ShortcutFolderBrush}" />
+                              <Setter Property="FontWeight" Value="SemiBold" />
+                            </DataTrigger>
+                          </Style.Triggers>
+                        </Style>
+                      </TextBlock.Style>
+                    </TextBlock>
+                    <Ellipse x:Name="TodoMarker" Width="4" Height="4" HorizontalAlignment="Right" VerticalAlignment="Center"
+                             Margin="0,0,-6,0" Fill="{DynamicResource ShortcutFolderBrush}" IsHitTestVisible="False"
+                             Visibility="{Binding HasTodoItems, Converter={StaticResource WidgetBooleanVisibility}}" />
+                  </Grid>
+                  <Viewbox x:Name="PreviewScale" HorizontalAlignment="Center" StretchDirection="DownOnly"
+                           Visibility="{DynamicResource CompactCalendarPreviewVisibility}">
                     <TextBlock Text="{Binding Preview}" TextAlignment="Center" FontSize="{DynamicResource CalendarPreviewFontSize}"
                                Foreground="{DynamicResource ShortcutFolderBrush}" />
                   </Viewbox>
+                  <TextBlock x:Name="ExpandedPreview" Text="{Binding ExpandedPreview}" TextAlignment="Center"
+                             FontSize="{DynamicResource CalendarPreviewFontSize}" Foreground="{DynamicResource ShortcutFolderBrush}"
+                             TextWrapping="Wrap" TextTrimming="CharacterEllipsis" MaxHeight="{DynamicResource CalendarPreviewHeight}"
+                             Visibility="{DynamicResource ExpandedCalendarPreviewVisibility}" />
                 </StackPanel>
               </Button>
             </DataTemplate>
           </ItemsControl.ItemTemplate>
         </ItemsControl>
-        <DockPanel x:Name="MemoHeader" Grid.Row="3" Margin="0,4,0,4">
+        <DockPanel x:Name="MemoHeader" Grid.Row="3" Margin="0,2,0,2">
           <Button x:Name="MemoToggle" DockPanel.Dock="Left" Style="{StaticResource WidgetButton}"
                   Width="48" Height="16" FontSize="11" Click="ToggleMemo" Visibility="Collapsed" />
           <TextBlock x:Name="MemoLabel" DockPanel.Dock="Left" Text="메모" FontSize="13" FontWeight="SemiBold"
                      Foreground="{DynamicResource ShortcutLabelBrush}" Margin="0,0,8,0" />
           <TextBlock DockPanel.Dock="Right" Text="{Binding MemoDateCaption}" FontSize="11"
                      Foreground="{DynamicResource ShortcutLabelBrush}" Margin="8,0,0,0" VerticalAlignment="Center" />
-          <Border Height="1" VerticalAlignment="Center" Background="#39D9CAFF" />
+          <Thumb x:Name="MemoDivider" Style="{StaticResource WidgetSectionDivider}"
+                 ToolTip="끌어서 달력과 메모의 높이 조절" AutomationProperties.Name="달력과 메모의 높이 조절" />
         </DockPanel>
         <Border x:Name="MemoBody" Grid.Row="4" Background="#1807091B" CornerRadius="5" Padding="2">
           <TextBox x:Name="NoteInput" Style="{StaticResource WidgetEditor}" FontSize="11" Padding="3,1" Tag="메모 입력" AcceptsReturn="True"
-                   TextWrapping="Wrap" VerticalScrollBarVisibility="Auto" AutomationProperties.Name="선택한 날짜의 메모"
-                   Text="{Binding Day.Note, UpdateSourceTrigger=PropertyChanged}" />
+                   TextWrapping="Wrap" VerticalScrollBarVisibility="Auto" AutomationProperties.Name="선택한 날짜의 달력 메모"
+                   Text="{Binding Day.CalendarNote, UpdateSourceTrigger=PropertyChanged}" />
         </Border>
         <TextBlock Grid.Row="5" Foreground="#FFFFC6B6" FontSize="11" Margin="0,5,0,0" TextWrapping="Wrap"
                    Visibility="{Binding SaveFailed, Converter={StaticResource WidgetBooleanVisibility}}"
                    Text="저장할 수 없습니다. 다시 시도 중입니다." AutomationProperties.LiveSetting="Polite" />
       </Grid>
-    </Border>
+    </local:WidgetCard>
     <Border x:Name="DockHost" Grid.Row="1" Visibility="Collapsed" ClipToBounds="True" />
     <local:WidgetResizeLayer x:Name="ResizeLayer" Grid.RowSpan="2" />
   </Grid>

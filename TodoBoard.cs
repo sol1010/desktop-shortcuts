@@ -19,6 +19,13 @@ internal sealed class TodoBoard
     public int? Y { get; set; }
     public double? Width { get; set; }
     public double? Height { get; set; }
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public int? BackgroundTransparency { get; set; }
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public bool? SizeManuallySet { get; set; }
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public double? MemoShare { get; set; }
+    internal bool KeepsEmptySize => SizeManuallySet ?? (Width is > 0 && Height is > 0 || MemoShare is > 0 and < 1);
     public bool DockedToCalendar { get; set; }
     public CalendarPlacement Calendar { get; init; } = new();
 
@@ -40,14 +47,23 @@ internal sealed class CalendarPlacement
     public int? Y { get; set; }
     public double? Width { get; set; }
     public double? Height { get; set; }
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public int? BackgroundTransparency { get; set; }
     public bool WeeklyMemoCollapsed { get; set; }
     public double? WeeklyExpandedHeight { get; set; }
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public double? WeeklyMemoShare { get; set; }
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public double? MonthlyMemoShare { get; set; }
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public double? LargeMemoShare { get; set; }
     public bool IsLargeView { get; set; }
 }
 
 internal sealed class TodoItem : INotifyPropertyChanged
 {
     private bool _isDone;
+    private bool _areChildrenCollapsed;
 
     public string Text { get; set; } = "";
     public bool IsDone
@@ -63,6 +79,20 @@ internal sealed class TodoItem : INotifyPropertyChanged
         }
     }
 
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingDefault)]
+    public bool AreChildrenCollapsed
+    {
+        get => _areChildrenCollapsed;
+        set
+        {
+            if (_areChildrenCollapsed != value)
+            {
+                _areChildrenCollapsed = value;
+                PropertyChanged?.Invoke(this, new PropertyChangedEventArgs(nameof(AreChildrenCollapsed)));
+            }
+        }
+    }
+
     public ObservableCollection<TodoItem> Children { get; init; } = [];
     public event PropertyChangedEventHandler? PropertyChanged;
 
@@ -70,15 +100,17 @@ internal sealed class TodoItem : INotifyPropertyChanged
     {
         Text = Text,
         IsDone = IsDone,
+        AreChildrenCollapsed = AreChildrenCollapsed,
         Children = new ObservableCollection<TodoItem>(Children.Select(child => child.Copy()))
     };
 }
 
-internal sealed class TodoStore(string path, string? legacyPath = null)
+internal sealed class TodoStore(string path, params string[] legacyPaths)
 {
     private static readonly JsonSerializerOptions Options = new() { WriteIndented = true };
 
     public static TodoStore Default { get; } = new(
+        Path.Combine(LocalSettings.DirectoryPath, "todo-days-v2.json"),
         Path.Combine(LocalSettings.DirectoryPath, "todo-days.json"),
         Path.Combine(LocalSettings.DirectoryPath, "todo.json"));
 
@@ -86,14 +118,15 @@ internal sealed class TodoStore(string path, string? legacyPath = null)
     {
         try
         {
-            using FileStream stream = OpenRead();
+            using FileStream stream = OpenRead(out bool readLegacy);
             TodoBoard board = JsonSerializer.Deserialize<TodoBoard>(stream, Options)
-                ?? throw new JsonException("투두 목록이 비어 있습니다.");
+                ?? throw new JsonException("할 일 목록이 비어 있습니다.");
             if (board.Days is null || board.Calendar is null)
             {
-                throw new JsonException("날짜별 투두 또는 달력 설정 형식을 확인하세요.");
+                throw new JsonException("날짜별 할 일 또는 달력 설정 형식을 확인하세요.");
             }
 
+            board.MigrationPending = readLegacy;
             if (board.LegacyItems is not null || board.LegacyNote is not null)
             {
                 DateOnly today = DateOnly.FromDateTime(DateTime.Today);
@@ -102,14 +135,14 @@ internal sealed class TodoStore(string path, string? legacyPath = null)
                     board.Days[today] = new TodoDay
                     {
                         Items = board.LegacyItems ?? [],
-                        Note = board.LegacyNote ?? ""
+                        SharedNote = board.LegacyNote
                     };
                 }
                 else
                 {
-                    if (day is null || day.Items is null || day.Note is null)
+                    if (day is null || day.Items is null)
                     {
-                        throw new JsonException("투두 목록 또는 메모 형식을 확인하세요.");
+                        throw new JsonException("할 일 목록 또는 메모 형식을 확인하세요.");
                     }
 
                     foreach (TodoItem item in board.LegacyItems ?? [])
@@ -120,7 +153,9 @@ internal sealed class TodoStore(string path, string? legacyPath = null)
                     string previousNote = board.LegacyNote ?? "";
                     if (previousNote.Length > 0)
                     {
-                        day.Note = day.Note.Length > 0 ? day.Note + Environment.NewLine + previousNote : previousNote;
+                        day.MigrateSharedNote();
+                        day.TodoNote = AppendNote(day.TodoNote, previousNote);
+                        day.CalendarNote = AppendNote(day.CalendarNote, previousNote);
                     }
                 }
 
@@ -131,23 +166,24 @@ internal sealed class TodoStore(string path, string? legacyPath = null)
 
             foreach (TodoDay day in board.Days.Values)
             {
-                if (day is null || day.Items is null || day.Note is null)
+                if (day is null || day.Items is null)
                 {
-                    throw new JsonException("투두 목록 또는 메모 형식을 확인하세요.");
+                    throw new JsonException("할 일 목록 또는 메모 형식을 확인하세요.");
                 }
 
+                board.MigrationPending |= day.MigrateSharedNote();
                 foreach (TodoItem item in day.Items)
                 {
                     if (item is null || item.Text is null || item.Children is null)
                     {
-                        throw new JsonException("투두 항목 형식을 확인하세요.");
+                        throw new JsonException("할 일 항목 형식을 확인하세요.");
                     }
 
                     foreach (TodoItem child in item.Children)
                     {
                         if (child is null || child.Text is null || child.Children is not { Count: 0 })
                         {
-                            throw new JsonException("하위 투두 항목 형식을 확인하세요.");
+                            throw new JsonException("하위 할 일 항목 형식을 확인하세요.");
                         }
                     }
                 }
@@ -165,15 +201,33 @@ internal sealed class TodoStore(string path, string? legacyPath = null)
         }
     }
 
-    private FileStream OpenRead()
+    private static string AppendNote(string current, string legacy) =>
+        current.Length > 0 ? current + Environment.NewLine + legacy : legacy;
+
+    private FileStream OpenRead(out bool readLegacy)
     {
+        readLegacy = false;
         try
         {
             return File.OpenRead(path);
         }
-        catch (FileNotFoundException) when (legacyPath is not null)
+        catch (Exception ex) when (ex is FileNotFoundException or DirectoryNotFoundException)
         {
-            return File.OpenRead(legacyPath);
+            foreach (string previous in legacyPaths)
+            {
+                try
+                {
+                    FileStream stream = File.OpenRead(previous);
+                    readLegacy = true;
+                    return stream;
+                }
+                catch (Exception missing) when (missing is FileNotFoundException or DirectoryNotFoundException)
+                {
+                    // Try the next older format if this one was never created.
+                }
+            }
+
+            throw;
         }
     }
 
